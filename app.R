@@ -16,15 +16,15 @@ header <- dashboardHeader(
 body <- dashboardBody(
     includeCSS("https://raw.githubusercontent.com/willoutcault/608_final/master/styles.css"),
     fluidRow(
-        column(width = 12,
+        column(width = 8,
                box(width = NULL, solidHeader = TRUE,
-                   leafletOutput("map", height = 800, width = 1000) %>% withSpinner(color="#3c8dbc")
+                   leafletOutput("map", height = 600, width = 1000) %>% withSpinner(color="#3c8dbc")
                ),
                box(width = NULL,
                    DT::dataTableOutput("jobPositionsTable")
                )
         ),
-        column(width = 4,
+        column(width = 3,
                box(width = NULL, status = "warning",
                    dateRangeInput("daterange", "Date range:",
                                   start  = Sys.Date()-7,
@@ -33,9 +33,14 @@ body <- dashboardBody(
                                   max    = Sys.Date()),
                    actionButton("go", "Search")
                )
+        ),
+        column(width = 4,
+               box(width = NULL, height = 650, status = "warning",
+                   plotOutput("plot1",),
+                )
+            )
         )
     )
-)
 
 
 ui <- dashboardPage(
@@ -54,31 +59,31 @@ server <- function(input,output){
     
     covid.data$test_date <- as.Date(covid.data$test_date)
 
+    aggregate <- function(daterange1, daterange2, covid.data){
+        covid.data %>%
+            filter(test_date >= daterange1 & test_date <= daterange2) %>% 
+            group_by(county) %>%
+            summarize("new_positives" = sum(new_positives),
+                      "cumulative_number_of_positives" = sum(cumulative_number_of_positives),
+                      "total_number_of_tests" = sum(total_number_of_tests),
+                      "cumulative_number_of_tests" = sum(cumulative_number_of_tests))
+    }
+    
+    
     
     
     output$map <- renderLeaflet({
         
-        covid.data.filtered <- covid.data %>%
-            filter(test_date >= input$daterange[1] & test_date <= input$daterange[2]) %>% 
-            group_by(county) %>%
-            summarize("new_positives" = sum(new_positives),
-                      "cumulative_number_of_positives" = sum(cumulative_number_of_positives),
-                      "total_number_of_tests" = sum(total_number_of_tests),
-                      "cumulative_number_of_tests" = sum(cumulative_number_of_tests))
-        
         date.range <- input$daterange[2] - input$daterange[1]
         
-        covid.data.filtered.old <- covid.data %>%
-            filter(test_date >= (input$daterange[1]-date.range) & test_date <= (input$daterange[2]-date.range)) %>% 
-            group_by(county) %>%
-            summarize("new_positives" = sum(new_positives),
-                      "cumulative_number_of_positives" = sum(cumulative_number_of_positives),
-                      "total_number_of_tests" = sum(total_number_of_tests),
-                      "cumulative_number_of_tests" = sum(cumulative_number_of_tests))
+        covid.data.filtered <- aggregate(input$daterange[1], input$daterange[2], covid.data)
         
-        covid.data.filtered$pct_change <- round((covid.data.filtered$new_positives/covid.data.filtered.old$new_positives)
-                                                - 1, 2)
+        covid.data.filtered.old <- aggregate(input$daterange[1]-date.range, input$daterange[2]-date.range, covid.data)
+        
+        covid.data.filtered$pct_change <- round(((covid.data.filtered$new_positives/
+                                                  covid.data.filtered.old$new_positives) - 1)*100, 2)
             
+        covid.data.filtered$pct_change <- paste(covid.data.filtered$pct_change, "%", sep="")
         
         merged.spdf <- sp::merge(county.data, covid.data.filtered, by.x="name", by.y="county")
         
@@ -102,6 +107,33 @@ server <- function(input,output){
     
     
     
+    
+    output$plot1<- renderPlot({
+        
+        date.range <- input$daterange[2] - input$daterange[1]
+        
+        covid.data.filtered <- aggregate(input$daterange[1], input$daterange[2], covid.data)
+        
+        covid.data.filtered.old <- aggregate(input$daterange[1]-date.range, input$daterange[2]-date.range, covid.data)
+        
+        covid.data.filtered$pct_change <- round(((covid.data.filtered$new_positives/
+                                                      covid.data.filtered.old$new_positives) - 1)*100, 2)
+        
+        covid.data.filtered$pct_change_type <- ifelse(covid.data.filtered$pct_change < 0, "below", "above")
+        
+        ggplot(covid.data.filtered, aes(x=county, y=pct_change, label=pct_change)) + 
+            geom_bar(stat='identity', aes(fill=pct_change_type))  +
+            scale_fill_manual(name="Mileage", 
+                              labels = c("Above Average", "Below Average"), 
+                              values = c("below"="#f8766d", "above"="#00ba38")) + 
+            labs(subtitle="Normalised mileage from 'mtcars'", 
+                 title= "Diverging Bars") + 
+            coord_flip()
+        
+        
+    }, height = 650)
+    
+    
     output$jobPositionsTable <- renderDataTable({
         
         covid.data.filtered <- covid.data %>%
@@ -123,32 +155,6 @@ server <- function(input,output){
         
     })
     
-    
-    
-    
-    output$jobPositionsTable <- renderDataTable({
-        
-
-       # datatable(merged.spdf.ss, options = list(paging = FALSE, scrollY = "225px"), rownames = FALSE)
-        
-    })
-    
-    
-    output$plot<- renderPlot({
-        
-        ggplot(count_location(jobdetails()), aes(x=reorder(Location, n),y=(n/sum(n)), label="count")) +
-            geom_bar(stat='identity', width=.5, fill = "lightblue", color = "darkblue")  +
-            scale_fill_manual(name="Cities Hiring") + 
-            coord_flip()+
-            labs(title="Top 10 Cities", 
-                 subtitle="Based Off Total Open Positions") +
-            theme(axis.title.x = element_blank(),
-                  axis.title.y = element_blank(),
-                  text = element_text(size=13)) +
-            scale_y_continuous(labels = scales::percent) +
-            scale_x_discrete(position = "left")
-        
-    }, height = 188)
     
     
 }
