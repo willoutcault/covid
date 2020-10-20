@@ -88,9 +88,18 @@ server <- function(input,output){
         merged.spdf <- sp::merge(county.data, covid.data.filtered, by.x="name", by.y="county")
         
         
-        popup <- paste0("<strong>Name: </strong>",merged.spdf@data$name,"<br>",
-                        "<strong>Cases: </strong>", merged.spdf@data$new_positives,"<br>",
-                        "<strong>Old Cases: </strong>", merged.spdf@data$old_positives,"<br>",
+        popup <- paste0("<h1>",merged.spdf@data$name," County</h1>",
+                        
+                        "<strong>",format(input$daterange[1]-date.range, format="%B %d")," - ",
+                        format(input$daterange[2]-date.range, format="%B %d")," :</strong>",
+                        merged.spdf@data$old_positives, "<br>",
+                        
+                        "<strong>",format(input$daterange[1], format="%B %d")," - ",
+                        format(input$daterange[2], format="%B %d")," :</strong>",
+                        merged.spdf@data$new_positives, "<br>",
+                        
+                        
+                        
                         "<strong>Percent Change: </strong>", merged.spdf@data$pct_change,"%")
         
         pal <- colorNumeric(
@@ -98,7 +107,6 @@ server <- function(input,output){
             domain = merged.spdf@data$new_positives)
         
         leaflet(merged.spdf) %>% 
-            addProviderTiles(providers$CartoDB.DarkMatter) %>% 
             setView(-76, 42.8, 7.4) %>%
             addPolygons(weight = 2, popup=popup, stroke = FALSE, smoothFactor = 0.2,
                         fillOpacity = 1, color = ~pal(new_positives))
