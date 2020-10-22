@@ -7,6 +7,7 @@ require(shinydashboard)
 require(DT)
 require(shinycssloaders)
 require(sf)
+require(plotly)
 
 
 
@@ -20,6 +21,9 @@ body <- dashboardBody(
         column(width = 3,
                box(width = NULL, status = "warning",
                    selectInput("daterange", "Date Range: ", c("Week", "Month", "Overall"), selected = "Week")
+               ),
+               box(width = NULL, status = "warning",
+                   selectInput("variable", "Variable: ", c("Daily Cases", "Overall Cases", "Daily Tests", "Overall Tests"), selected = "Daily Cases")
                )
         ),
         column(width = 6,
@@ -29,7 +33,12 @@ body <- dashboardBody(
         ),
         column(width = 3,
                box(width = NULL, status = "warning",
-                   plotOutput("plot1",),
+                   plotOutput("plot1",)
+               )
+        ),
+        column(width = 9,
+               box(width = NULL, status = "warning",
+                   plotlyOutput("plot2")
                )
         )
     )
@@ -71,28 +80,7 @@ server <- function(input,output){
     # Data filter based on leaflet coordinates
     
     
-    
     output$map <- renderLeaflet({
-        
-
-        xmin <- -74.9
-        xmax <- -72.68
-        ymax <- 41.73
-        ymin <- 40
-        
-        filt_bbox <- sf::st_bbox(c(xmin = ifelse(is.na(xmin), -180, xmin), 
-                                   ymin = ifelse(is.na(ymin),  -90,  ymin), 
-                                   xmax = ifelse(is.na(xmax), +180, xmax), 
-                                   ymax = ifelse(is.na(ymax),  +90, ymax)), 
-                                 crs = st_crs(4326)) %>% 
-            sf::st_as_sfc(.)
-        
-        
-        find_data <- sf::st_within(polys_sf, filt_bbox)
-        
-        filt_data <- polys_sf[which(lengths(find_data) != 0), ]
-        
-        county.data <- county.data[county.data$county %in% filt_data$county,]
         
         
         if (input$daterange=="Week"){
@@ -117,8 +105,6 @@ server <- function(input,output){
         covid.data.filtered$old_positives <- covid.data.filtered.old$new_positives
         
         merged.spdf <- sp::merge(county.data, covid.data.filtered, by.x="name", by.y="county")
-        
-
         
         popup <- paste0("<h1>",merged.spdf@data$name," County</h1>",
                         
@@ -148,6 +134,27 @@ server <- function(input,output){
     })
     
     
+    data_map <- reactive({
+        
+        
+        xmin <- input$map_bounds$west
+        xmax <- input$map_bounds$east
+        ymax <- input$map_bounds$north
+        ymin <- input$map_bounds$south
+        
+        filt_bbox <- sf::st_bbox(c(xmin = ifelse(is.na(xmin), -180, xmin), 
+                                   ymin = ifelse(is.na(ymin),  -90,  ymin), 
+                                   xmax = ifelse(is.na(xmax), +180, xmax), 
+                                   ymax = ifelse(is.na(ymax),  +90, ymax)), 
+                                 crs = st_crs(4326)) %>% 
+            sf::st_as_sfc(.)
+        
+        find_data <- sf::st_within(polys_sf, filt_bbox)
+        
+        filt_data <- polys_sf[which(lengths(find_data) != 0), ]
+        
+        county.data <- county.data[county.data$county %in% filt_data$county,]
+    })
     
     
     
@@ -163,6 +170,7 @@ server <- function(input,output){
         if (input$daterange=="Overall"){
             daterange <- c(as.Date("2020-03-01", format="%Y-%m-%d"), Sys.Date())
         }
+
         
         date.range <- daterange[2] - daterange[1]
         
@@ -176,15 +184,13 @@ server <- function(input,output){
         
         covid.data.filtered$case_count_diff_type <- ifelse(covid.data.filtered$case_count_diff < 0, "good", "bad")
         
-        
-        
-
+        covid.data.filtered <- covid.data.filtered[covid.data.filtered$county %in% data_map()$name,]
         
         ggplot(covid.data.filtered, aes(x=reorder(county, case_count_diff), y=case_count_diff, label=case_count_diff)) + 
             geom_bar(stat='identity', aes(fill=case_count_diff_type))  +
             scale_fill_manual(name="Mileage", 
-                              labels = c("Less Cases", "More Cases"), 
-                              values = c("good"="#f8766d", "bad"="#00ba38")) + 
+                              labels = c("More Cases", "Less Cases"), 
+                              values = c("good"="#00ba38", "bad"="#f8766d")) + 
             labs(title= paste("This ",input$daterange," Versus Last ", input$daterange, sep="")) + 
             coord_flip()
         
@@ -192,11 +198,48 @@ server <- function(input,output){
     })
     
     
-    output$plot2<- renderPlot({
+    output$plot2<- renderPlotly({
+        
+        if (input$daterange=="Week"){
+            daterange <- c(Sys.Date()-7, Sys.Date())
+        }
+        if (input$daterange=="Month"){
+            daterange <- c(Sys.Date() %m-% months(1), Sys.Date())
+        }
+        if (input$daterange=="Overall"){
+            daterange <- c(as.Date("2020-03-01", format="%Y-%m-%d"), Sys.Date())
+        }
+
         
         
+        covid.data.filtered <- covid.data %>%
+            filter(test_date >= daterange[1] & test_date <= daterange[2]) %>%
+            group_by(county, test_date) %>%
+            summarize("new_positives" = sum(new_positives),
+                      "cumulative_number_of_positives" = sum(cumulative_number_of_positives),
+                      "total_number_of_tests" = sum(total_number_of_tests),
+                      "cumulative_number_of_tests" = sum(cumulative_number_of_tests))
+        
+        covid.data.filtered <- covid.data.filtered[covid.data.filtered$county %in% data_map()$name,]
         
         
+        if(input$variable == "Daily Cases"){
+            covid.data.filtered$y <- covid.data.filtered$new_positives
+        }
+        if(input$variable == "Overall Cases"){
+            covid.data.filtered$y <- covid.data.filtered$cumulative_number_of_positives
+        }
+        if(input$variable == "Daily Tests"){
+            covid.data.filtered$y <- covid.data.filtered$total_number_of_tests
+        }
+        if(input$variable == "Overall Tests"){
+            covid.data.filtered$y <- covid.data.filtered$cumulative_number_of_tests
+        }
+
+
+        d <- setNames(covid.data.filtered, names(covid.data.filtered))
+        plot_ly(d) %>%
+            add_lines(x = ~test_date, y = ~y, color = ~county)
     })
     
     
